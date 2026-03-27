@@ -22,6 +22,115 @@ type HomeLivePageProps = {
   startInEditMode: boolean;
 };
 
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+type SavePageRequest = {
+  pageId: string | null;
+  title: string;
+  status: "draft" | "published";
+  content: PageContent;
+};
+
+type UploadMediaRequest = {
+  file: File | null;
+};
+
+export async function parseJsonSafely(response: Response): Promise<unknown | null> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export function resolveApiErrorMessage(payload: unknown, fallback: string): string {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const value = (payload as { error?: unknown }).error;
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+export async function requestMediaList(fetchLike: FetchLike = fetch): Promise<MediaAsset[]> {
+  let response: Response;
+
+  try {
+    response = await fetchLike("/api/admin/media", { cache: "no-store" });
+  } catch {
+    throw new Error("Medien konnten nicht geladen werden.");
+  }
+
+  const data = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    throw new Error(resolveApiErrorMessage(data, "Medien konnten nicht geladen werden."));
+  }
+
+  const payload = data as { media?: MediaAsset[] } | null;
+  return Array.isArray(payload?.media) ? payload.media : [];
+}
+
+export async function requestSavePage(
+  payload: SavePageRequest,
+  fetchLike: FetchLike = fetch,
+): Promise<void> {
+  if (!payload.pageId) {
+    throw new Error("Keine Seiten-ID gefunden. Bitte im Admin zuerst Seite anlegen.");
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetchLike(`/api/admin/pages/${payload.pageId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: payload.title,
+        status: payload.status,
+        content: payload.content,
+      }),
+    });
+  } catch {
+    throw new Error("Speichern fehlgeschlagen.");
+  }
+
+  const data = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(resolveApiErrorMessage(data, "Speichern fehlgeschlagen."));
+  }
+}
+
+export async function requestUploadMedia(
+  payload: UploadMediaRequest,
+  fetchLike: FetchLike = fetch,
+): Promise<void> {
+  if (!payload.file) {
+    throw new Error("Bitte erst eine Datei auswählen.");
+  }
+
+  const formData = new FormData();
+  formData.set("file", payload.file);
+
+  let response: Response;
+
+  try {
+    response = await fetchLike("/api/admin/media", {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error("Upload fehlgeschlagen.");
+  }
+
+  const data = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(resolveApiErrorMessage(data, "Upload fehlgeschlagen."));
+  }
+}
+
 function uid(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -82,75 +191,37 @@ export function HomeLivePage({
   async function loadMedia() {
     if (!canEdit) return;
 
-    const response = await fetch("/api/admin/media", { cache: "no-store" });
-    const data = (await response.json()) as { media?: MediaAsset[]; error?: string };
-
-    if (!response.ok) {
-      throw new Error(data.error ?? "Medien konnten nicht geladen werden.");
-    }
-
-    setMedia(data.media ?? []);
+    const mediaAssets = await requestMediaList(fetch);
+    setMedia(mediaAssets);
   }
 
   async function savePage() {
-    if (!pageId) {
-      setError("Keine Seiten-ID gefunden. Bitte im Admin zuerst Seite anlegen.");
-      return;
-    }
-
     setIsSaving(true);
     setMessage(null);
     setError(null);
 
     try {
-      const response = await fetch(`/api/admin/pages/${pageId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, status, content }),
-      });
-
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(data.error ?? "Speichern fehlgeschlagen.");
-      }
-
+      await requestSavePage({ pageId, title, status, content }, fetch);
       setMessage("Gespeichert.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unbekannter Fehler");
+      setError(reason instanceof Error ? reason.message : "Speichern fehlgeschlagen.");
     } finally {
       setIsSaving(false);
     }
   }
 
   async function uploadMedia() {
-    if (!uploadFile) {
-      setError("Bitte erst eine Datei auswählen.");
-      return;
-    }
-
     setIsSaving(true);
     setMessage(null);
     setError(null);
 
     try {
-      const formData = new FormData();
-      formData.set("file", uploadFile);
-
-      const response = await fetch("/api/admin/media", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(data.error ?? "Upload fehlgeschlagen.");
-      }
-
+      await requestUploadMedia({ file: uploadFile }, fetch);
       setUploadFile(null);
       await loadMedia();
       setMessage("Datei hochgeladen.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unbekannter Fehler");
+      setError(reason instanceof Error ? reason.message : "Upload fehlgeschlagen.");
     } finally {
       setIsSaving(false);
     }
@@ -274,7 +345,13 @@ export function HomeLivePage({
               const next = !isEditing;
               setIsEditing(next);
               if (next) {
-                loadMedia().catch(() => undefined);
+                loadMedia().catch((reason) => {
+                  setError(
+                    reason instanceof Error
+                      ? reason.message
+                      : "Medien konnten nicht geladen werden.",
+                  );
+                });
               }
             }}
             className="fixed right-4 top-4 z-40 rounded-md bg-black px-4 py-2 text-sm text-white"
