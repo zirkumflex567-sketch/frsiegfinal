@@ -11,6 +11,25 @@ set -euo pipefail
 #   bash scripts/ops/run-on-htown.sh scripts/ops/htown/nginx-cutover-frsieg.sh
 #   bash scripts/ops/run-on-htown.sh --sudo scripts/ops/htown/nginx-cutover-frsieg.sh
 
+log_error() {
+  local message="$1"
+  shift
+  printf '%s %s\n' "$message" "$*" >&2
+}
+
+quote_args() {
+  local quoted=""
+  local arg
+  for arg in "$@"; do
+    printf -v quoted '%s%q ' "$quoted" "$arg"
+  done
+  printf '%s' "${quoted% }"
+}
+
+SCP_BIN="${SCP_BIN:-scp}"
+SSH_BIN="${SSH_BIN:-ssh}"
+SUDO_BIN="${SUDO_BIN:-sudo}"
+
 USE_SUDO="false"
 if [[ "${1:-}" == "--sudo" ]]; then
   USE_SUDO="true"
@@ -18,7 +37,7 @@ if [[ "${1:-}" == "--sudo" ]]; then
 fi
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 [--sudo] <local_script_path> [args...]"
+  log_error "Usage:" "$0 [--sudo] <local_script_path> [args...]"
   exit 1
 fi
 
@@ -26,17 +45,41 @@ LOCAL_SCRIPT="$1"
 shift
 
 if [[ ! -f "$LOCAL_SCRIPT" ]]; then
-  echo "Script not found: $LOCAL_SCRIPT"
+  log_error "Script not found:" "$LOCAL_SCRIPT"
   exit 1
 fi
 
 SCRIPT_BASENAME="$(basename "$LOCAL_SCRIPT")"
 REMOTE_SCRIPT="/tmp/${SCRIPT_BASENAME%.sh}-$(date +%s).sh"
 
-scp "$LOCAL_SCRIPT" "htown:${REMOTE_SCRIPT}" >/dev/null
-
-if [[ "$USE_SUDO" == "true" ]]; then
-  ssh htown "chmod +x '${REMOTE_SCRIPT}' && sudo '${REMOTE_SCRIPT}' $*"
+if "$SCP_BIN" "$LOCAL_SCRIPT" "htown:${REMOTE_SCRIPT}" >/dev/null; then
+  :
 else
-  ssh htown "chmod +x '${REMOTE_SCRIPT}' && '${REMOTE_SCRIPT}' $*"
+  code=$?
+  log_error "phase=transfer status=error" "exit_code=${code} local_script=${LOCAL_SCRIPT} remote_script=${REMOTE_SCRIPT}"
+  exit "$code"
+fi
+
+SSH_CMD=("$SSH_BIN" htown bash -s -- "$REMOTE_SCRIPT" "$USE_SUDO" "$SUDO_BIN" "$@")
+
+if "${SSH_CMD[@]}" <<'REMOTE_EXEC'; then
+set -euo pipefail
+
+remote_script="$1"
+use_sudo="$2"
+sudo_bin="$3"
+shift 3
+
+chmod +x "$remote_script"
+if [[ "$use_sudo" == "true" ]]; then
+  "$sudo_bin" "$remote_script" "$@"
+else
+  "$remote_script" "$@"
+fi
+REMOTE_EXEC
+  :
+else
+  code=$?
+  log_error "phase=execute status=error" "exit_code=${code} remote_command=$(quote_args "${SSH_CMD[@]}")"
+  exit "$code"
 fi
