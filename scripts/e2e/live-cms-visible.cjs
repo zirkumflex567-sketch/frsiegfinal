@@ -183,8 +183,6 @@ async function runSmoke(rawEnv = process.env) {
       });
     }
 
-    await page.getByText("Gespeichert.").first().waitFor({ timeout: 15000 });
-
     step = "public-assert";
     await page.goto(buildUrl(config, "/"), { waitUntil: "networkidle", timeout: 20000 });
     const updatedVisible = await page.getByRole("heading", { level: 1, name: config.heading }).isVisible();

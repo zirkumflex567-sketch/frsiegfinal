@@ -39,6 +39,7 @@ describe("live-cms-visible helpers", () => {
       artifactPath: ".gsd/pw-live-cms-error.png",
       message: "500 from save endpoint",
       finalUrl: "http://localhost:3000/admin",
+      detail: { timeoutMs: 20000 },
     });
 
     expect(payload.ok).toBe(false);
@@ -47,6 +48,20 @@ describe("live-cms-visible helpers", () => {
     expect(payload.endpoint).toBe("/api/admin/content-pages/home");
     expect(payload.artifactPath).toContain("pw-live-cms-error.png");
     expect(payload.message).toContain("500");
+    expect(payload.detail).toEqual({ timeoutMs: 20000 });
     expect(payload.finalUrl).toContain("/admin");
+  });
+
+  it("defaults optional action/endpoint/detail fields to null", () => {
+    const payload = buildStatusPayload({
+      ok: false,
+      step: "login-page",
+      artifactPath: ".gsd/pw-live-cms-error-login-page.png",
+      message: "navigation timeout",
+    });
+
+    expect(payload.action).toBeNull();
+    expect(payload.endpoint).toBeNull();
+    expect(payload.detail).toBeNull();
   });
 });

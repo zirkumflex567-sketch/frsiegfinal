@@ -3,6 +3,26 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
+export async function parseJsonSafely(response: Response): Promise<unknown | null> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export function resolveApiErrorMessage(payload: unknown, fallback: string): string {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const errorValue = (payload as { error?: unknown }).error;
+
+    if (typeof errorValue === "string" && errorValue.trim().length > 0) {
+      return errorValue;
+    }
+  }
+
+  return fallback;
+}
+
 export default function AdminLoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -22,10 +42,10 @@ export default function AdminLoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = await parseJsonSafely(response);
 
       if (!response.ok) {
-        setError(data.error ?? "Login fehlgeschlagen.");
+        setError(resolveApiErrorMessage(data, "Login fehlgeschlagen."));
         return;
       }
 

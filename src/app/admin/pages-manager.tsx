@@ -63,6 +63,26 @@ type PageDetailsResponse = {
   error?: string;
 };
 
+export async function parseJsonSafely(response: Response): Promise<unknown | null> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export function resolveApiErrorMessage(payload: unknown, fallback: string): string {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const errorValue = (payload as { error?: unknown }).error;
+
+    if (typeof errorValue === "string" && errorValue.trim().length > 0) {
+      return errorValue;
+    }
+  }
+
+  return fallback;
+}
+
 function makeLocalId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -152,39 +172,46 @@ export function PagesManager() {
 
   async function loadPages() {
     const response = await fetch("/api/admin/pages", { cache: "no-store" });
-    const data = (await response.json()) as { pages?: ContentPage[]; error?: string };
+    const data = await parseJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Seiten konnten nicht geladen werden.");
+      throw new Error(resolveApiErrorMessage(data, "Seiten konnten nicht geladen werden."));
     }
 
-    setPages(data.pages ?? []);
+    const pagesPayload = data as { pages?: ContentPage[] } | null;
+    setPages(Array.isArray(pagesPayload?.pages) ? pagesPayload.pages : []);
   }
 
   async function loadMedia() {
     const response = await fetch("/api/admin/media", { cache: "no-store" });
-    const data = (await response.json()) as { media?: MediaAsset[]; error?: string };
+    const data = await parseJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Medien konnten nicht geladen werden.");
+      throw new Error(resolveApiErrorMessage(data, "Medien konnten nicht geladen werden."));
     }
 
-    setMedia(data.media ?? []);
+    const mediaPayload = data as { media?: MediaAsset[] } | null;
+    setMedia(Array.isArray(mediaPayload?.media) ? mediaPayload.media : []);
   }
 
   async function loadPageDetails(pageId: string) {
     const response = await fetch(`/api/admin/pages/${pageId}`, { cache: "no-store" });
-    const data = (await response.json()) as PageDetailsResponse;
+    const data = await parseJsonSafely(response);
 
-    if (!response.ok || !data.page) {
-      throw new Error(data.error ?? "Seite konnte nicht geladen werden.");
+    if (!response.ok || !data || typeof data !== "object" || !("page" in data) || !(data as PageDetailsResponse).page) {
+      throw new Error(resolveApiErrorMessage(data, "Seite konnte nicht geladen werden."));
     }
 
-    const content = data.page.content ?? {};
+    const pageData = (data as PageDetailsResponse).page;
+    if (!pageData) {
+      throw new Error("Seite konnte nicht geladen werden.");
+    }
 
-    setTitle(data.page.title);
-    setSlug(data.page.slug);
-    setStatus(data.page.status);
+    const content = pageData.content ?? {};
+
+    setTitle(pageData.title);
+    setSlug(pageData.slug);
+    setStatus(pageData.status);
 
     setHeroHeading(content.hero?.heading ?? "");
     setHeroSubheading(content.hero?.subheading ?? "");
@@ -317,15 +344,19 @@ export function PagesManager() {
         body: JSON.stringify(buildPayload()),
       });
 
-      const data = (await response.json()) as { page?: ContentPage; error?: string };
+      const data = await parseJsonSafely(response);
+      const page =
+        data && typeof data === "object" && "page" in data
+          ? (data as { page?: ContentPage }).page
+          : undefined;
 
-      if (!response.ok || !data.page) {
-        throw new Error(data.error ?? "Erstellen fehlgeschlagen.");
+      if (!response.ok || !page) {
+        throw new Error(resolveApiErrorMessage(data, "Erstellen fehlgeschlagen."));
       }
 
       await loadPages();
-      setSelectedPageId(data.page.id);
-      await loadPageDetails(data.page.id);
+      setSelectedPageId(page.id);
+      await loadPageDetails(page.id);
       setMessage("Seite angelegt.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unbekannter Fehler");
@@ -353,10 +384,10 @@ export function PagesManager() {
         body: JSON.stringify(buildPayload()),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = await parseJsonSafely(response);
 
       if (!response.ok) {
-        throw new Error(data.error ?? "Speichern fehlgeschlagen.");
+        throw new Error(resolveApiErrorMessage(data, "Speichern fehlgeschlagen."));
       }
 
       await loadPages();
@@ -380,9 +411,9 @@ export function PagesManager() {
         method: "DELETE",
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = await parseJsonSafely(response);
       if (!response.ok) {
-        throw new Error(data.error ?? "Löschen fehlgeschlagen.");
+        throw new Error(resolveApiErrorMessage(data, "Löschen fehlgeschlagen."));
       }
 
       await loadPages();
@@ -415,9 +446,9 @@ export function PagesManager() {
         body: formData,
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = await parseJsonSafely(response);
       if (!response.ok) {
-        throw new Error(data.error ?? "Upload fehlgeschlagen.");
+        throw new Error(resolveApiErrorMessage(data, "Upload fehlgeschlagen."));
       }
 
       await loadMedia();
@@ -441,9 +472,9 @@ export function PagesManager() {
         method: "DELETE",
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = await parseJsonSafely(response);
       if (!response.ok) {
-        throw new Error(data.error ?? "Asset konnte nicht gelöscht werden.");
+        throw new Error(resolveApiErrorMessage(data, "Asset konnte nicht gelöscht werden."));
       }
 
       await loadMedia();
