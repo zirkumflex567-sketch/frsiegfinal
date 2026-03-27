@@ -88,15 +88,27 @@ async function runSmoke(rawEnv = process.env) {
   const page = await context.newPage();
 
   let step = "startup";
+  let stepContext = {
+    action: null,
+    endpoint: null,
+  };
 
   try {
     step = "login-page";
+    stepContext = {
+      action: "open-login-page",
+      endpoint: "/admin/login",
+    };
     await page.goto(buildUrl(config, "/admin/login"), {
       waitUntil: "networkidle",
       timeout: 20000,
     });
 
     step = "login-submit";
+    stepContext = {
+      action: "admin-login",
+      endpoint: "/api/admin/login",
+    };
     await page.fill("#email", config.email);
     await page.fill("#password", config.password);
 
@@ -127,10 +139,18 @@ async function runSmoke(rawEnv = process.env) {
     await page.waitForURL("**/admin", { timeout: 20000 });
 
     step = "open-live-editor";
+    stepContext = {
+      action: "open-live-editor",
+      endpoint: "/?edit=1",
+    };
     await page.getByRole("link", { name: "Live-Editor öffnen" }).click();
     await page.waitForURL("**/?edit=1", { timeout: 20000 });
 
     step = "content-edit";
+    stepContext = {
+      action: "edit-content",
+      endpoint: "/?edit=1",
+    };
     await page.getByLabel("Status").selectOption("published");
     await page.getByLabel("Hero Überschrift").fill(config.heading);
     await page.getByLabel("Schriftart").selectOption({ label: "Klassisch (Arial)" });
@@ -146,6 +166,10 @@ async function runSmoke(rawEnv = process.env) {
     });
 
     step = "media-upload";
+    stepContext = {
+      action: "upload-media",
+      endpoint: "/api/admin/media",
+    };
     const mediaInput = page.locator('input[type="file"]').first();
     const uploadButton = page.getByRole("button", { name: "Datei hochladen" });
 
@@ -156,6 +180,10 @@ async function runSmoke(rawEnv = process.env) {
     }
 
     step = "save";
+    stepContext = {
+      action: "save-content",
+      endpoint: "/api/admin/pages/:id",
+    };
     const saveResponsePromise = page.waitForResponse(
       (response) => {
         const isPut = response.request().method() === "PUT";
@@ -184,6 +212,10 @@ async function runSmoke(rawEnv = process.env) {
     }
 
     step = "public-assert";
+    stepContext = {
+      action: "assert-public-home",
+      endpoint: "/",
+    };
     await page.goto(buildUrl(config, "/"), { waitUntil: "networkidle", timeout: 20000 });
     const updatedVisible = await page.getByRole("heading", { level: 1, name: config.heading }).isVisible();
 
@@ -217,11 +249,12 @@ async function runSmoke(rawEnv = process.env) {
     return buildStatusPayload({
       ok: false,
       step,
-      action: detailContext.action,
-      endpoint: detailContext.endpoint,
+      action: detailContext.action || stepContext.action,
+      endpoint: detailContext.endpoint || stepContext.endpoint,
       artifactPath,
       message: error instanceof Error ? error.message : String(error),
       detail: {
+        ...stepContext,
         ...detailContext,
         name: error instanceof Error ? error.name : "UnknownError",
       },
@@ -248,5 +281,8 @@ module.exports = {
   normalizePathPrefix,
   buildRuntimeConfig,
   buildStatusPayload,
+  buildUrl,
+  SmokeError,
+  parseResponseJson,
   runSmoke,
 };
