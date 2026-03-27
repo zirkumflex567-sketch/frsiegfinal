@@ -2,19 +2,33 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getContentPageBySlugMock = vi.fn();
+const getCurrentAdminFromCookiesMock = vi.fn();
+const homeLivePagePropsMock = vi.fn();
 
 vi.mock("../lib/content/pages-repository", () => ({
   getContentPageBySlug: getContentPageBySlugMock,
 }));
 
+vi.mock("../lib/auth/admin-auth", () => ({
+  getCurrentAdminFromCookies: getCurrentAdminFromCookiesMock,
+}));
+
 vi.mock("./home-live-page", () => ({
-  HomeLivePage: ({ initialContent }: { initialContent: { hero?: { heading?: string; subheading?: string; ctaLabel?: string } } }) => (
-    <main>
-      <h1>{initialContent.hero?.heading || "Willkommen bei FR-Sieg"}</h1>
-      <p>{initialContent.hero?.subheading || "Hier entsteht die neue FR-Sieg Website."}</p>
-      {initialContent.hero?.ctaLabel ? <a href="/kontakt">{initialContent.hero.ctaLabel}</a> : null}
-    </main>
-  ),
+  HomeLivePage: (props: {
+    canEdit: boolean;
+    startInEditMode: boolean;
+    initialContent: { hero?: { heading?: string; subheading?: string; ctaLabel?: string } };
+  }) => {
+    homeLivePagePropsMock(props);
+
+    return (
+      <main data-can-edit={String(props.canEdit)} data-start-edit={String(props.startInEditMode)}>
+        <h1>{props.initialContent.hero?.heading || "Willkommen bei FR-Sieg"}</h1>
+        <p>{props.initialContent.hero?.subheading || "Hier entsteht die neue FR-Sieg Website."}</p>
+        {props.initialContent.hero?.ctaLabel ? <a href="/kontakt">{props.initialContent.hero.ctaLabel}</a> : null}
+      </main>
+    );
+  },
 }));
 
 describe("app/page", () => {
@@ -124,5 +138,112 @@ describe("app/page", () => {
     );
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("opens edit mode only when admin is authenticated and edit query equals 1", async () => {
+    getContentPageBySlugMock.mockResolvedValue({
+      id: "home-id",
+      slug: "home",
+      title: "Startseite",
+      status: "published",
+      content: {
+        hero: { heading: "CMS Hero Heading" },
+        panels: [],
+        partners: [],
+      },
+    });
+    getCurrentAdminFromCookiesMock.mockResolvedValue({
+      userId: "admin-id",
+      email: "admin@example.com",
+      role: "admin",
+    });
+
+    const { default: Home } = await import("./page");
+    renderToStaticMarkup(
+      await Home({
+        searchParams: Promise.resolve({ edit: "1" }),
+      }),
+    );
+
+    expect(getCurrentAdminFromCookiesMock).toHaveBeenCalledTimes(1);
+    expect(homeLivePagePropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canEdit: true, startInEditMode: true }),
+    );
+  });
+
+  it("does not open edit mode for malformed or missing edit query values", async () => {
+    getContentPageBySlugMock.mockResolvedValue({
+      id: "home-id",
+      slug: "home",
+      title: "Startseite",
+      status: "published",
+      content: {
+        hero: { heading: "CMS Hero Heading" },
+        panels: [],
+        partners: [],
+      },
+    });
+
+    const { default: Home } = await import("./page");
+
+    renderToStaticMarkup(await Home({ searchParams: Promise.resolve({ edit: "0" }) }));
+    renderToStaticMarkup(await Home({ searchParams: Promise.resolve({ edit: "true" }) }));
+    renderToStaticMarkup(await Home({ searchParams: Promise.resolve({ edit: ["1"] }) }));
+    renderToStaticMarkup(await Home({ searchParams: Promise.resolve({}) }));
+
+    expect(getCurrentAdminFromCookiesMock).not.toHaveBeenCalled();
+    expect(homeLivePagePropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canEdit: false, startInEditMode: false }),
+    );
+  });
+
+  it("keeps public mode when auth helper fails while edit query is enabled", async () => {
+    getContentPageBySlugMock.mockResolvedValue({
+      id: "home-id",
+      slug: "home",
+      title: "Startseite",
+      status: "published",
+      content: {
+        hero: { heading: "CMS Hero Heading" },
+        panels: [],
+        partners: [],
+      },
+    });
+    getCurrentAdminFromCookiesMock.mockRejectedValue(new Error("auth unavailable"));
+
+    const { default: Home } = await import("./page");
+    renderToStaticMarkup(await Home({ searchParams: Promise.resolve({ edit: "1" }) }));
+
+    expect(getCurrentAdminFromCookiesMock).toHaveBeenCalledTimes(1);
+    expect(homeLivePagePropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canEdit: false, startInEditMode: false }),
+    );
+  });
+
+  it("does not open edit mode for authenticated admin when edit query is missing", async () => {
+    getContentPageBySlugMock.mockResolvedValue({
+      id: "home-id",
+      slug: "home",
+      title: "Startseite",
+      status: "published",
+      content: {
+        hero: { heading: "CMS Hero Heading" },
+        panels: [],
+        partners: [],
+      },
+    });
+    getCurrentAdminFromCookiesMock.mockResolvedValue({
+      userId: "admin-id",
+      email: "admin@example.com",
+      role: "admin",
+    });
+
+    const { default: Home } = await import("./page");
+    renderToStaticMarkup(await Home());
+
+    expect(getCurrentAdminFromCookiesMock).not.toHaveBeenCalled();
+    expect(homeLivePagePropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canEdit: false, startInEditMode: false }),
+    );
   });
 });

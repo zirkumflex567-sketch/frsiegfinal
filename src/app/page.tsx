@@ -1,6 +1,7 @@
 import { HomeLivePage } from "./home-live-page";
 import { getContentPageBySlug } from "../lib/content/pages-repository";
 import { normalizePageContent } from "../lib/content/page-view-model";
+import { getCurrentAdminFromCookies } from "../lib/auth/admin-auth";
 import type { PageContent } from "../lib/content/content-page-schema";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +67,15 @@ function classifyRepositoryFailure(error: unknown): "repository-timeout" | "repo
   return "repository-error";
 }
 
-export default async function Home() {
+type HomePageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+function shouldRequestEditMode(editParam: string | string[] | undefined): boolean {
+  return typeof editParam === "string" && editParam === "1";
+}
+
+export default async function Home({ searchParams }: HomePageProps = {}) {
   try {
     const homePage = await getContentPageBySlug("home", { preferPublished: true });
 
@@ -82,14 +91,27 @@ export default async function Home() {
       return renderFallback("content-parse-failure");
     }
 
+    const resolvedSearchParams = searchParams ? await searchParams : undefined;
+    const requestedEditMode = shouldRequestEditMode(resolvedSearchParams?.edit);
+
+    let canEdit = false;
+
+    if (requestedEditMode) {
+      try {
+        canEdit = Boolean(await getCurrentAdminFromCookies());
+      } catch {
+        canEdit = false;
+      }
+    }
+
     return (
       <HomeLivePage
         pageId={homePage.id}
         initialTitle={homePage.title}
         initialStatus={homePage.status}
         initialContent={content}
-        canEdit={false}
-        startInEditMode={false}
+        canEdit={canEdit}
+        startInEditMode={canEdit}
       />
     );
   } catch (error) {
