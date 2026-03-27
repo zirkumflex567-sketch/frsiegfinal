@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: frsiegv2-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-frsieg}:${POSTGRES_PASSWORD:-frsieg_dev_password}@db:5432/${POSTGRES_DB:-frsiegv2}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@fr-sieg.de}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      MEDIA_UPLOAD_DIR: ${MEDIA_UPLOAD_DIR:-/app/data/uploads}
+    ports:
+      - "3000:3000"
+    volumes:
+      - app_uploads:/app/data/uploads
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: frsiegv2-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-frsiegv2}
+      POSTGRES_USER: ${POSTGRES_USER:-frsieg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-frsieg_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-frsieg} -d ${POSTGRES_DB:-frsiegv2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  app_uploads:
