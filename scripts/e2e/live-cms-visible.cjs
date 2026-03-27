@@ -1,62 +1,254 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { chromium } = require('playwright');
-const path = require('node:path');
+const { chromium } = require("playwright");
+const path = require("node:path");
 
-(async () => {
-  const base = process.env.FRSIEG_BASE_URL || 'https://h-town.duckdns.org';
-  const pathPrefix = (process.env.FRSIEG_PATH_PREFIX ?? '/fr-sieg').replace(/\/$/, '');
-  const email = process.env.FRSIEG_ADMIN_EMAIL || 'admin@fr-sieg.de';
-  const password = process.env.FRSIEG_ADMIN_PASSWORD || 'OmaModus2026!';
-  const uploadPath = process.env.FRSIEG_UPLOAD_FILE || path.resolve('public/next.svg');
-  const heading = `Willkommen bei FR-Sieg ${Date.now()}`;
+function normalizePathPrefix(value) {
+  const input = `${value ?? ""}`.trim();
+  if (!input) return "";
 
-  const browser = await chromium.launch({ headless: false, slowMo: 220 });
+  const stripped = input.replace(/^\/+|\/+$/g, "");
+  if (!stripped) return "";
+
+  return `/${stripped}`;
+}
+
+function buildRuntimeConfig(env) {
+  return {
+    baseUrl: (env.FRSIEG_BASE_URL || "http://localhost:3000").replace(/\/$/, ""),
+    pathPrefix: normalizePathPrefix(env.FRSIEG_PATH_PREFIX ?? ""),
+    email: env.FRSIEG_ADMIN_EMAIL || "admin@fr-sieg.de",
+    password: env.FRSIEG_ADMIN_PASSWORD || "OmaModus2026!",
+    uploadPath: env.FRSIEG_UPLOAD_FILE || path.resolve("public/next.svg"),
+    heading: `Willkommen bei FR-Sieg ${Date.now()}`,
+    headless: env.FRSIEG_HEADLESS !== "0",
+    slowMo: Number(env.FRSIEG_SLOW_MO || 0),
+  };
+}
+
+function buildStatusPayload({
+  ok,
+  step,
+  artifactPath,
+  message,
+  action,
+  endpoint,
+  finalUrl,
+  heading,
+  detail,
+}) {
+  return {
+    ok,
+    step,
+    action: action || null,
+    endpoint: endpoint || null,
+    artifactPath,
+    message,
+    detail: detail || null,
+    heading: heading || null,
+    finalUrl: finalUrl || null,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function buildUrl(config, pathname) {
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return `${config.baseUrl}${config.pathPrefix}${normalizedPath}`;
+}
+
+class SmokeError extends Error {
+  constructor(message, context = {}) {
+    super(message);
+    this.name = "SmokeError";
+    this.context = context;
+  }
+}
+
+async function parseResponseJson(response, context) {
+  const rawBody = await response.text();
+
+  try {
+    return rawBody ? JSON.parse(rawBody) : {};
+  } catch {
+    throw new SmokeError("Malformed JSON response from endpoint", {
+      ...context,
+      status: response.status(),
+      responseSnippet: rawBody.slice(0, 180),
+    });
+  }
+}
+
+async function runSmoke(rawEnv = process.env) {
+  const config = buildRuntimeConfig(rawEnv);
+  const browser = await chromium.launch({
+    headless: config.headless,
+    slowMo: config.slowMo,
+  });
   const context = await browser.newContext();
   const page = await context.newPage();
 
+  let step = "startup";
+
   try {
-    await page.goto(`${base}${pathPrefix}/admin/login`, { waitUntil: 'networkidle' });
-    await page.fill('#email', email);
-    await page.fill('#password', password);
-    await page.click('button[type="submit"]');
-    await page.waitForURL('**/admin', { timeout: 20000 });
-    await page.waitForTimeout(1200);
-
-    await page.getByLabel('Hero Überschrift').fill(heading);
-    await page.getByLabel('Schriftart').selectOption({ label: 'Klassisch (Arial)' });
-
-    const colorInput = page.locator('label:has-text("Überschrift-Farbe") input[type="color"]').first();
-    await colorInput.evaluate((el) => {
-      el.value = '#7c3aed';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+    step = "login-page";
+    await page.goto(buildUrl(config, "/admin/login"), {
+      waitUntil: "networkidle",
+      timeout: 20000,
     });
 
-    await page.locator('aside:has-text("Medien") input[type="file"]').first().setInputFiles(uploadPath);
-    await page.getByRole('button', { name: 'Datei hochladen' }).click();
-    await page.getByText('Datei hochgeladen.').first().waitFor({ timeout: 15000 });
+    step = "login-submit";
+    await page.fill("#email", config.email);
+    await page.fill("#password", config.password);
 
-    const saveButton = page.getByRole('button', { name: /Speichern|Anlegen/ }).first();
+    const loginResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" && response.url().includes("/api/admin/login"),
+      { timeout: 20000 },
+    );
+
+    await page.click('button[type="submit"]');
+    const loginResponse = await loginResponsePromise;
+    const loginBody = await parseResponseJson(loginResponse, {
+      step,
+      action: "admin-login",
+      endpoint: "/api/admin/login",
+    });
+
+    if (!loginResponse.ok()) {
+      throw new SmokeError("Admin login failed", {
+        step,
+        action: "admin-login",
+        endpoint: "/api/admin/login",
+        status: loginResponse.status(),
+        responseSnippet: JSON.stringify(loginBody).slice(0, 180),
+      });
+    }
+
+    await page.waitForURL("**/admin", { timeout: 20000 });
+
+    step = "open-live-editor";
+    await page.getByRole("link", { name: "Live-Editor öffnen" }).click();
+    await page.waitForURL("**/?edit=1", { timeout: 20000 });
+
+    step = "content-edit";
+    await page.getByLabel("Status").selectOption("published");
+    await page.getByLabel("Hero Überschrift").fill(config.heading);
+    await page.getByLabel("Schriftart").selectOption({ label: "Klassisch (Arial)" });
+
+    const colorInput = page
+      .locator('label:has-text("Überschrift-Farbe") input[type="color"]')
+      .first();
+
+    await colorInput.evaluate((el) => {
+      el.value = "#7c3aed";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    step = "media-upload";
+    const mediaInput = page.locator('input[type="file"]').first();
+    const uploadButton = page.getByRole("button", { name: "Datei hochladen" });
+
+    if ((await mediaInput.count()) > 0 && (await uploadButton.count()) > 0) {
+      await mediaInput.setInputFiles(config.uploadPath);
+      await uploadButton.first().click();
+      await page.getByText("Datei hochgeladen.").first().waitFor({ timeout: 15000 });
+    }
+
+    step = "save";
+    const saveResponsePromise = page.waitForResponse(
+      (response) => {
+        const isPut = response.request().method() === "PUT";
+        return isPut && response.url().includes("/api/admin/pages/");
+      },
+      { timeout: 20000 },
+    );
+
+    const saveButton = page.getByRole("button", { name: /Speichern|Anlegen/ }).first();
     await saveButton.click();
-    await page.getByText('Änderungen gespeichert.').first().waitFor({ timeout: 15000 });
+    const saveResponse = await saveResponsePromise;
+    const saveBody = await parseResponseJson(saveResponse, {
+      step,
+      action: "save-content",
+      endpoint: "/api/admin/pages/:id",
+    });
 
-    await page.goto(`${base}${pathPrefix}/?edit=1`, { waitUntil: 'networkidle' });
-    const updatedVisible = await page.getByRole('heading', { level: 1, name: heading }).isVisible();
+    if (!saveResponse.ok()) {
+      throw new SmokeError("CMS save failed", {
+        step,
+        action: "save-content",
+        endpoint: "/api/admin/pages/:id",
+        status: saveResponse.status(),
+        responseSnippet: JSON.stringify(saveBody).slice(0, 180),
+      });
+    }
 
-    const screenshot = path.resolve('.gsd/pw-live-cms-proof.png');
-    await page.screenshot({ path: screenshot, fullPage: true });
+    await page.getByText("Gespeichert.").first().waitFor({ timeout: 15000 });
 
-    console.log(JSON.stringify({ ok: updatedVisible, heading, screenshot, finalUrl: page.url() }));
+    step = "public-assert";
+    await page.goto(buildUrl(config, "/"), { waitUntil: "networkidle", timeout: 20000 });
+    const updatedVisible = await page.getByRole("heading", { level: 1, name: config.heading }).isVisible();
 
-    await page.waitForTimeout(10000);
-    await browser.close();
-    process.exit(updatedVisible ? 0 : 1);
+    const artifactPath = path.resolve(".gsd/pw-live-cms-proof.png");
+    await page.screenshot({ path: artifactPath, fullPage: true });
+
+    if (!updatedVisible) {
+      throw new SmokeError("Saved heading is not visible on public route", {
+        step,
+        action: "assert-public-home",
+        endpoint: "/",
+      });
+    }
+
+    return buildStatusPayload({
+      ok: true,
+      step: "done",
+      action: "assert-public-home",
+      endpoint: "/",
+      artifactPath,
+      message: "Live CMS smoke passed",
+      finalUrl: page.url(),
+      heading: config.heading,
+    });
   } catch (error) {
-    const screenshot = path.resolve('.gsd/pw-live-cms-error.png');
-    await page.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
-    console.error(JSON.stringify({ ok: false, error: String(error), screenshot }));
+    const artifactPath = path.resolve(`.gsd/pw-live-cms-error-${step}.png`);
+    await page.screenshot({ path: artifactPath, fullPage: true }).catch(() => {});
+
+    const detailContext = error instanceof SmokeError ? error.context : {};
+
+    return buildStatusPayload({
+      ok: false,
+      step,
+      action: detailContext.action,
+      endpoint: detailContext.endpoint,
+      artifactPath,
+      message: error instanceof Error ? error.message : String(error),
+      detail: {
+        ...detailContext,
+        name: error instanceof Error ? error.name : "UnknownError",
+      },
+      finalUrl: page.url(),
+      heading: config.heading,
+    });
+  } finally {
     await browser.close();
-    process.exit(1);
   }
-})();
+}
+
+async function main() {
+  const payload = await runSmoke(process.env);
+  const logMethod = payload.ok ? console.log : console.error;
+  logMethod(JSON.stringify(payload));
+  process.exit(payload.ok ? 0 : 1);
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  normalizePathPrefix,
+  buildRuntimeConfig,
+  buildStatusPayload,
+  runSmoke,
+};
