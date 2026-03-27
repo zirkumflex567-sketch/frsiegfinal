@@ -8,15 +8,33 @@ Neue FR-Sieg v2 Website mit self-hosted **Oma-Modus CMS**.
 - Einfaches CMS mit Login, Live-Bearbeitung und Bildupload
 - Betrieb vollständig self-hosted auf htown VPS (Docker Compose + PostgreSQL)
 
-## Aktueller Stand
+## Aktueller Stand (Foundation S01)
 
 - [x] Next.js 16 + Docker Compose (`app` + `db`)
+- [x] Public Homepage (`/`) ist request-time CMS-backed (`home`) mit stabilem Fallback bei Content/DB-Fehlern
 - [x] Admin Login mit Session-Cookie
 - [x] Content-Model für Seiten (`hero`, `colors`, `panels`, `partners`, `links`)
 - [x] Admin CRUD APIs für Seiten (`/api/admin/pages`)
 - [x] Medien-Upload + Verwaltung (`/api/admin/media`)
 - [x] Live-Editor auf Startseite (`/?edit=1` als Admin)
 - [x] Backup/Restore Skripte
+
+## Quickstart lokal
+
+```bash
+npm install
+npm test
+npm run build
+npm run dev
+```
+
+App danach unter: `http://localhost:3000`
+
+Optionaler Live-CMS Smoke (laufender lokaler Server nötig):
+
+```bash
+FRSIEG_BASE_URL=http://localhost:3000 FRSIEG_PATH_PREFIX= npm run e2e:live
+```
 
 ## Start auf htown
 
@@ -37,6 +55,7 @@ Danach: `http://<htown-ip>:3000`
 - `src/app/api/media/[assetId]/route.ts` – öffentliche Auslieferung von Medien
 - `src/app/page.tsx` + `src/app/home-live-page.tsx` – öffentliche Seite + Live-Editor
 - `src/lib/content/*` – Content-/Media-Modelle + Repositories
+- `vitest.config.ts` – Test-Scope (ohne Build-Artefakte)
 - `docs/DEPLOY-HTOWN.md` – Deploy Doku
 - `docs/CMS-OMA-MODUS.md` – Bedienung
 - `scripts/backup-db.sh`, `scripts/restore-db.sh` – Betrieb
