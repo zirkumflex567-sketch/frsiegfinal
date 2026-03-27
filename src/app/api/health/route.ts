@@ -14,12 +14,16 @@ export async function GET() {
       database: "up",
     });
   } catch (error) {
+    console.error("health check failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
+
     return NextResponse.json(
       {
         ok: false,
         service: "frsiegv2",
         database: "down",
-        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     );

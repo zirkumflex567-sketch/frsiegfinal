@@ -120,6 +120,56 @@ describe("live-cms-visible helpers", () => {
     });
   });
 
+  it("captures malformed response snippet in SmokeError context", async () => {
+    const response = {
+      text: async () => `{"broken":${"x".repeat(400)}}`,
+      status: () => 504,
+    };
+
+    await expect(
+      parseResponseJson(response as never, {
+        step: "save",
+        action: "save-content",
+        endpoint: "/api/admin/pages/:id",
+      }),
+    ).rejects.toMatchObject({
+      context: expect.objectContaining({
+        step: "save",
+        action: "save-content",
+        endpoint: "/api/admin/pages/:id",
+        status: 504,
+        responseSnippet: expect.any(String),
+      }),
+    });
+  });
+
+  it("preserves timeout step context in machine-readable detail payload", () => {
+    const payload = buildStatusPayload({
+      ok: false,
+      step: "login-submit",
+      action: "admin-login",
+      endpoint: "/api/admin/login",
+      artifactPath: ".gsd/pw-live-cms-error-login-submit.png",
+      message: "Timed out waiting for response",
+      detail: {
+        timeoutMs: 20000,
+        status: "timeout",
+      },
+    });
+
+    expect(payload).toMatchObject({
+      ok: false,
+      step: "login-submit",
+      action: "admin-login",
+      endpoint: "/api/admin/login",
+      artifactPath: ".gsd/pw-live-cms-error-login-submit.png",
+      detail: {
+        timeoutMs: 20000,
+        status: "timeout",
+      },
+    });
+  });
+
   it("exposes SmokeError instances for machine-readable triage", () => {
     const error = new SmokeError("save failed", {
       step: "save",
