@@ -16,7 +16,7 @@ type MediaAsset = {
 type HomeLivePageProps = {
   pageId: string | null;
   initialTitle: string;
-  initialStatus: "draft" | "published";
+  initialStatus: PageStatus;
   initialContent: PageContent;
   canEdit: boolean;
   startInEditMode: boolean;
@@ -27,12 +27,20 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 type SavePageRequest = {
   pageId: string | null;
   title: string;
-  status: "draft" | "published";
+  status: PageStatus;
   content: PageContent;
 };
 
 type UploadMediaRequest = {
   file: File | null;
+};
+
+type PageStatus = "draft" | "published";
+
+type EditorSnapshot = {
+  title: string;
+  status: PageStatus;
+  content: PageContent;
 };
 
 export async function parseJsonSafely(response: Response): Promise<unknown | null> {
@@ -131,6 +139,10 @@ export async function requestUploadMedia(
   }
 }
 
+export function needsPublishConfirmation(previousStatus: PageStatus, nextStatus: PageStatus) {
+  return previousStatus === "draft" && nextStatus === "published";
+}
+
 function uid(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -162,10 +174,16 @@ export function HomeLivePage({
   startInEditMode,
 }: HomeLivePageProps) {
   const [title, setTitle] = useState(initialTitle);
-  const [status, setStatus] = useState<"draft" | "published">(initialStatus);
+  const [status, setStatus] = useState<PageStatus>(initialStatus);
   const [content, setContent] = useState<PageContent>(initialContent);
   const [isEditing, setIsEditing] = useState(startInEditMode);
+  const [editorMode, setEditorMode] = useState<"simple" | "advanced">("simple");
   const [isSaving, setIsSaving] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<EditorSnapshot>({
+    title: initialTitle,
+    status: initialStatus,
+    content: initialContent,
+  });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,18 +214,35 @@ export function HomeLivePage({
   }
 
   async function savePage() {
+    if (
+      needsPublishConfirmation(savedSnapshot.status, status) &&
+      typeof window !== "undefined" &&
+      !window.confirm("Seite jetzt veröffentlichen? Danach ist sie öffentlich sichtbar.")
+    ) {
+      return;
+    }
+
     setIsSaving(true);
     setMessage(null);
     setError(null);
 
     try {
       await requestSavePage({ pageId, title, status, content }, fetch);
+      setSavedSnapshot({ title, status, content });
       setMessage("Gespeichert.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Speichern fehlgeschlagen.");
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function discardChanges() {
+    setTitle(savedSnapshot.title);
+    setStatus(savedSnapshot.status);
+    setContent(savedSnapshot.content);
+    setMessage("Änderungen verworfen.");
+    setError(null);
   }
 
   async function uploadMedia() {
@@ -345,6 +380,7 @@ export function HomeLivePage({
               const next = !isEditing;
               setIsEditing(next);
               if (next) {
+                setEditorMode("simple");
                 loadMedia().catch((reason) => {
                   setError(
                     reason instanceof Error
@@ -365,10 +401,31 @@ export function HomeLivePage({
               <p className="mb-3 text-xs text-neutral-600">
                 Reihenfolge: Text ändern → optional Bild hochladen/zuweisen → Speichern.
               </p>
+              <p className="mb-3 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-900">
+                <strong>Tipp:</strong> Im einfachen Modus kannst du nichts kaputt machen – ändere nur die wichtigsten Felder.
+              </p>
+
+              <div className="mb-3 grid grid-cols-2 gap-2" role="tablist" aria-label="Editor Modus">
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("simple")}
+                  className={`rounded border px-3 py-2 text-sm ${editorMode === "simple" ? "bg-black text-white" : "bg-white"}`}
+                >
+                  Einfacher Modus
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("advanced")}
+                  className={`rounded border px-3 py-2 text-sm ${editorMode === "advanced" ? "bg-black text-white" : "bg-white"}`}
+                >
+                  Erweiterter Modus
+                </button>
+              </div>
 
               <div className="space-y-3 pb-28">
+                <h3 className="text-sm font-semibold">Wichtigste Inhalte</h3>
                 <label className="block text-sm">
-                  <span>Seitentitel</span>
+                  <span>Seitenname</span>
                   <input
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={title}
@@ -377,7 +434,7 @@ export function HomeLivePage({
                 </label>
 
                 <label className="block text-sm">
-                  <span>Status</span>
+                  <span>Sichtbarkeit auf der Website</span>
                   <select
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={status}
@@ -385,15 +442,15 @@ export function HomeLivePage({
                       setStatus(event.target.value as "draft" | "published")
                     }
                   >
-                    <option value="draft">Draft</option>
-                    <option value="published">Published</option>
+                    <option value="draft">Entwurf (noch nicht sichtbar)</option>
+                    <option value="published">Veröffentlicht (sichtbar)</option>
                   </select>
                 </label>
 
-                <h3 className="pt-2 text-sm font-semibold">Hero-Bereich</h3>
+                <h3 className="pt-2 text-sm font-semibold">Startbereich oben</h3>
 
                 <label className="block text-sm">
-                  <span>Hero Überschrift</span>
+                  <span>Große Überschrift oben</span>
                   <input
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={hero.heading || ""}
@@ -407,7 +464,7 @@ export function HomeLivePage({
                 </label>
 
                 <label className="block text-sm">
-                  <span>Hero Untertext</span>
+                  <span>Einleitungstext darunter</span>
                   <textarea
                     className="mt-1 w-full rounded border px-3 py-2"
                     rows={3}
@@ -422,7 +479,7 @@ export function HomeLivePage({
                 </label>
 
                 <label className="block text-sm">
-                  <span>CTA Text</span>
+                  <span>Knopf-Text</span>
                   <input
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={hero.ctaLabel || ""}
@@ -436,7 +493,7 @@ export function HomeLivePage({
                 </label>
 
                 <label className="block text-sm">
-                  <span>CTA Link</span>
+                  <span>Knopf-Link (Webadresse)</span>
                   <input
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={hero.ctaHref || ""}
@@ -449,6 +506,32 @@ export function HomeLivePage({
                   />
                 </label>
 
+                <label className="block text-sm">
+                  <span>Bild für den Startbereich</span>
+                  <select
+                    className="mt-1 w-full rounded border px-3 py-2"
+                    value={hero.backgroundAssetId ?? ""}
+                    onChange={(event) =>
+                      setContent((prev) => ({
+                        ...prev,
+                        hero: {
+                          ...(prev.hero ?? {}),
+                          backgroundAssetId: event.target.value || null,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="">Kein Bild</option>
+                    {imageAssets.map((asset) => (
+                      <option key={asset.id} value={asset.id}>
+                        {asset.fileName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {editorMode === "advanced" ? (
+                  <>
                 <h3 className="pt-2 text-sm font-semibold">Design (Farben & Schrift)</h3>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -798,6 +881,8 @@ export function HomeLivePage({
                     ))}
                   </div>
                 </div>
+                  </>
+                ) : null}
 
                 <h3 className="pt-2 text-sm font-semibold">Bilder hochladen</h3>
 
@@ -828,6 +913,15 @@ export function HomeLivePage({
                       disabled={isSaving}
                     >
                       {isSaving ? "Speichert..." : "Speichern"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="rounded border px-3 py-2 text-sm"
+                      onClick={discardChanges}
+                      disabled={isSaving}
+                    >
+                      Änderungen verwerfen
                     </button>
 
                     <Link href="/admin" className="rounded border px-3 py-2 text-sm">

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   HomeLivePage,
+  needsPublishConfirmation,
   parseJsonSafely,
   requestMediaList,
   requestSavePage,
@@ -20,6 +21,13 @@ const baseContent: PageContent = {
 };
 
 describe("home-live-page helpers", () => {
+  it("requires confirmation only when changing from draft to published", () => {
+    expect(needsPublishConfirmation("draft", "published")).toBe(true);
+    expect(needsPublishConfirmation("published", "published")).toBe(false);
+    expect(needsPublishConfirmation("published", "draft")).toBe(false);
+    expect(needsPublishConfirmation("draft", "draft")).toBe(false);
+  });
+
   it("uses endpoint-provided error strings and falls back for malformed payloads", () => {
     expect(resolveApiErrorMessage({ error: "Kaputt" }, "Fallback")).toBe("Kaputt");
     expect(resolveApiErrorMessage({ error: 123 }, "Fallback")).toBe("Fallback");
@@ -118,5 +126,30 @@ describe("HomeLivePage boundary rendering", () => {
 
     expect(closedHtml).toContain("Oma-Modus Editor");
     expect(openHtml).toContain("Editor schließen");
+  });
+
+  it("defaults to simple mode and keeps advanced sections hidden initially", () => {
+    const openHtml = renderToStaticMarkup(
+      <HomeLivePage
+        pageId={"home-id"}
+        initialTitle={"Home"}
+        initialStatus={"draft"}
+        initialContent={baseContent}
+        canEdit={true}
+        startInEditMode={true}
+      />,
+    );
+
+    expect(openHtml).toContain("Einfacher Modus");
+    expect(openHtml).toContain("Erweiterter Modus");
+    expect(openHtml).toContain("Wichtigste Inhalte");
+    expect(openHtml).toContain("Seitenname");
+    expect(openHtml).toContain("Sichtbarkeit auf der Website");
+    expect(openHtml).toContain("Große Überschrift oben");
+    expect(openHtml).toContain("Knopf-Text");
+    expect(openHtml).toContain("Tipp:");
+    expect(openHtml).toContain("Änderungen verwerfen");
+    expect(openHtml).not.toContain("Design (Farben & Schrift)");
+    expect(openHtml).not.toContain("Panels / Inhaltsblöcke");
   });
 });
