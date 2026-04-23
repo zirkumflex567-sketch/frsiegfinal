@@ -58,6 +58,7 @@ Danach: `http://<htown-ip>:3000`
 - `vitest.config.ts` – Test-Scope (ohne Build-Artefakte)
 - `docs/DEPLOY-HTOWN.md` – Deploy Doku
 - `docs/CMS-OMA-MODUS.md` – Bedienung
+- `docs/UPDATE-RUNBOOK.md` – Betrieb/Updates/SEO/Plesk Runbook
 - `scripts/backup-db.sh`, `scripts/restore-db.sh` – Betrieb
 - `scripts/ops/run-on-htown.sh` – sichere Remote-Ausführung ohne Quoting-Chaos
 - `scripts/ops/htown/nginx-cutover-frsieg.sh` – idempotenter FR-Sieg Cutover
